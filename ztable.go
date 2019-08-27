@@ -10,28 +10,37 @@ import (
 	"gonum.org/v1/gonum/integrate/quad"
 )
 
+// ZTable is the core z-score table component
 type ZTable struct {
+	// list of unexported fields
 	zScoreMap map[string]int
 	leafNodes []*LeafNode
 	rootNode  *Node
 }
 
-type ZTableOptions struct {
-	BucketSize int
+// Options is a config for the NewZTable function which allows bucket size customization.
+// Default bucket size is 30
+type Options struct {
+	BucketSize int // number of table values to group together in tree leaf-node
 }
 
+// Node struct
 type Node struct {
+	// list of unexported fields
 	value     float64
 	leftNode  *Node
 	rightNode *Node
 	index     int
 }
 
+// LeafNode struct
 type LeafNode struct {
+	// list of unexported fields
 	zScore     string
 	percentage float64
 }
 
+// FindPercentage returns the percentage of a given z-score from the table
 func (zt *ZTable) FindPercentage(zScore float64) float64 {
 	key := fmt.Sprintf(`%.2f`, zScore)
 	if index, ok := zt.zScoreMap[key]; ok {
@@ -40,6 +49,7 @@ func (zt *ZTable) FindPercentage(zScore float64) float64 {
 	return 0
 }
 
+// FindZScore returns the closest z-score given a percentage value
 func (zt *ZTable) FindZScore(percentage float64) (float64, error) {
 	currNode := zt.rootNode
 	startingIndex := 0
@@ -73,7 +83,9 @@ func (zt *ZTable) FindZScore(percentage float64) (float64, error) {
 	return 0, errors.New("Unable to find ZScore given percentage")
 }
 
-func NewZTable(options *ZTableOptions) *ZTable {
+// NewZTable creates and returns a new ZTable object. 'options' allows you to set the bucket size of the leaf nodes.
+// Tuning bucket size will allow you to trade off memory for speed and vice-versa in the z-score lookup,
+func NewZTable(options *Options) *ZTable {
 	bucketSize := 30
 	if options != nil && options.BucketSize != 0 {
 		bucketSize = options.BucketSize
