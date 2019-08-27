@@ -1,17 +1,19 @@
-package main
+package ztable
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"runtime"
+	"strconv"
 
 	"gonum.org/v1/gonum/integrate/quad"
 )
 
 type ZTable struct {
-	zScoreMap   map[string]int
-	percentages []float64
-	rootNode    *Node
+	zScoreMap map[string]int
+	leafNodes []*LeafNode
+	rootNode  *Node
 }
 
 type ZTableOptions struct {
@@ -25,32 +27,89 @@ type Node struct {
 	index     int
 }
 
+type LeafNode struct {
+	zScore     string
+	percentage float64
+}
+
+func (zt *ZTable) FindPercentage(zScore float64) float64 {
+	key := fmt.Sprintf(`%.2f`, zScore)
+	if index, ok := zt.zScoreMap[key]; ok {
+		return zt.leafNodes[index].percentage
+	}
+	return 0
+}
+
+func (zt *ZTable) FindZScore(percentage float64) (float64, error) {
+	currNode := zt.rootNode
+	startingIndex := 0
+	if currNode != nil {
+		for {
+			if percentage > currNode.value && currNode.rightNode != nil {
+				currNode = currNode.rightNode
+			} else if percentage <= currNode.value && currNode.leftNode != nil {
+				currNode = currNode.leftNode
+			} else {
+				startingIndex = currNode.index
+				break
+			}
+		}
+		if startingIndex == 0 && percentage < zt.leafNodes[0].percentage {
+			return strconv.ParseFloat(zt.leafNodes[0].zScore, 64)
+		}
+		for startingIndex < len(zt.leafNodes) {
+			currLeaf := zt.leafNodes[startingIndex]
+			if percentage == currLeaf.percentage || startingIndex+1 >= len(zt.leafNodes) {
+				return strconv.ParseFloat(currLeaf.zScore, 64)
+			} else if nextLeaf := zt.leafNodes[startingIndex+1]; percentage < nextLeaf.percentage {
+				if percentage-currLeaf.percentage <= nextLeaf.percentage-percentage {
+					return strconv.ParseFloat(currLeaf.zScore, 64)
+				}
+				return strconv.ParseFloat(nextLeaf.zScore, 64)
+			}
+			startingIndex++
+		}
+	}
+	return 0, errors.New("Unable to find ZScore given percentage")
+}
+
 func NewZTable(options *ZTableOptions) *ZTable {
-	bucketSize := 10
+	bucketSize := 30
 	if options != nil && options.BucketSize != 0 {
 		bucketSize = options.BucketSize
 	}
 	zTable := ZTable{
-		zScoreMap:   make(map[string]int),
-		percentages: []float64{},
+		zScoreMap: make(map[string]int),
+		leafNodes: []*LeafNode{},
 	}
+
 	zScore := float64(-4)
-	leafNodes := []*Node{}
 	for zScore <= 4 {
 		concurrent := runtime.GOMAXPROCS(0)
 		percentage := quad.Fixed(normalProbabilityDensity, math.Inf(-1), zScore, 1000, nil, concurrent)
-		index := len(zTable.percentages)
+		index := len(zTable.leafNodes)
 		if index%bucketSize == 0 {
-			leafNodes = append(leafNodes, &Node{
-				value: percentage,
-				index: index,
-			})
+
 		}
-		zTable.zScoreMap[fmt.Sprintf(`%.2f`, zScore)] = index
-		zTable.percentages = append(zTable.percentages, percentage)
+		zScoreString := fmt.Sprintf(`%.2f`, zScore)
+		zTable.zScoreMap[zScoreString] = index
+		zTable.leafNodes = append(zTable.leafNodes, &LeafNode{zScore: zScoreString, percentage: percentage})
 		zScore = zScore + 0.01
 	}
-	rootNodeSlice := buildTree(leafNodes)
+
+	initLayer := []*Node{}
+	i := 0
+	for i < len(zTable.leafNodes) {
+		if i+bucketSize < len(zTable.leafNodes) {
+			initLayer = append(initLayer, &Node{
+				value: zTable.leafNodes[i+bucketSize-1].percentage,
+				index: i,
+			})
+		}
+		i = i + bucketSize
+	}
+
+	rootNodeSlice := buildTree(initLayer)
 	if len(rootNodeSlice) > 0 {
 		zTable.rootNode = rootNodeSlice[0]
 	}
@@ -76,9 +135,4 @@ func buildTree(layer []*Node) []*Node {
 		return currLayer
 	}
 	return buildTree(currLayer)
-}
-
-func main() {
-	zt := NewZTable(nil)
-	fmt.Println(zt)
 }
